@@ -6,17 +6,27 @@
 WiFiClientSecure esp32Client;
 PubSubClient client(esp32Client);
 
-const char* ssid = "GalaxyS23+";  //"INFINITUME99E" ; //"INFINITUM3FA3_2.4"; //"INFINITUMD19E_2.4";  //"CICESE-LaPaz";
-const char* password = "Seismo-1";  //"uvXbM95uP6" ;  // "5pQYbgFgdU"; //"KQ3rYFQet8"; //"redcicese";
+const char* ssid = "INFINITUME99E";  //"INFINITUME99E" ; //"INFINITUM3FA3_2.4"; //"INFINITUMD19E_2.4";  //"CICESE-LaPaz";
+const char* password = "uvXbM95uP6";  //"uvXbM95uP6" ;  // "5pQYbgFgdU"; //"KQ3rYFQet8"; //"redcicese";
 
-const char* ssid_respaldo = "INFINITUME99E" ;
-const char* password_respaldo = "uvXbM95uP6";
+const char* ssid_respaldo = "RUT240_6B84" ;
+const char* password_respaldo = "u0LBd72Q";
 
-const long interval = 5000;  // Intervalo de 5 segundos (5000 milisegundos)
-
+const long interval = 300000;  // Intervalo de 5 segundos (5000 milisegundos)
+uint64_t deep_sleep = 3600; // cuanto tiempo estara en deep sleep
 // pines de relevadores
 int rele2 = 25;
-int rele3 = 35;
+int rele3 = 4;
+int rele4 = 35;
+
+// Pines del ADC
+#include <driver/adc.h>
+#include "esp_adc_cal.h"
+
+// Parámetros de calibración
+#define DEFAULT_VREF 1100  // Valor de referencia del voltaje en mV (ajusta si es necesario)
+#define CALIBRATION_FACTOR 1.18  // Ajusta este valor basado en la discrepancia observada
+esp_adc_cal_characteristics_t *adc_chars;
 
 const char *server ="b9e13cb483c3438f9caf0945f6329083.s1.eu.hivemq.cloud";
 int port = 8883;
@@ -63,7 +73,7 @@ emyPxgcYxn/eR44/KJ4EBs+lVDR3veyJm+kXQ99b21/+jh5Xos1AnX5iItreGCc=
 -----END CERTIFICATE-----
 )EOF";
 
-
+int intententos_restart=0;
 
 
 void wifiInit(){
@@ -124,42 +134,66 @@ void wifiInit(){
 void scanNetworks() {
   int n = WiFi.scanNetworks();
   Serial.println("Scan done");
+  
   if (n == 0) {
     Serial.println("No networks found");
   } else {
-    Serial.println("Networks found:");
+    // Bandera para verificar si se encontró la red deseada
+    bool found = false;
+    
     for (int i = 0; i < n; ++i) {
-      Serial.print(i + 1);
-      Serial.print(": ");
-      Serial.print(WiFi.SSID(i));
-      Serial.print(" (");
-      Serial.print(WiFi.RSSI(i));
-      Serial.print(")");
-      Serial.println((WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? " Open" : " Encrypted");
+      // Verificar si la red actual es "RUT240_6B84"
+      if (WiFi.SSID(i) == "RUT240_6B84") {
+        Serial.println("Red WiFi 'RUT240_6B84' encontrada.");
+        found = true;
+        break; // Salir del bucle si se encontró la red
+      }
+    }
+    
+    // Si no se encontró la red específica
+    if (!found) {
+      Serial.println("Red WiFi 'RUT240_6B84' no encontrada.");
     }
   }
 }
+
+
 void scanNetworks_publish() {
   int n = WiFi.scanNetworks();
   Serial.println("Scan done");
+
   if (n == 0) {
     Serial.println("No networks found");
     client.publish("scan_wifi", "No networks found");  // Publicar que no se encontraron redes
   } else {
-    Serial.println("Networks found:");
+    // Bandera para verificar si se encontró la red deseada
+    bool found = false;
+    
     for (int i = 0; i < n; ++i) {
-      // Construir el mensaje a publicar
-      String mensaje = String(i + 1) + ": " + WiFi.SSID(i) + " (" + String(WiFi.RSSI(i)) + ")";
-      mensaje += (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? " Open" : " Encrypted";
+      // Verificar si la red actual es "RUT240_6B84"
+      if (WiFi.SSID(i) == "RUT240_6B84") {
+        // Construir el mensaje a publicar
+        String mensaje = "Red WiFi 'RUT240_6B84' encontrada con RSSI: " + String(WiFi.RSSI(i));
+        mensaje += (WiFi.encryptionType(i) == WIFI_AUTH_OPEN) ? " Open" : " Encrypted";
 
-      // Publicar la red escaneada a través de MQTT
-      client.publish("scan_wifi", mensaje.c_str());
+        // Publicar el mensaje a través de MQTT
+        client.publish("scan_wifi", mensaje.c_str());
 
-      // Mostrar en el monitor serial
-      //Serial.println(mensaje);
+        // Mostrar en el monitor serial
+        Serial.println(mensaje);
+
+        found = true;
+        break; // Salir del bucle si se encontró la red
+      }
+    }
+    // Si no se encontró la red específica
+    if (!found) {
+      Serial.println("Red WiFi 'RUT240_6B84' no encontrada.");
+      client.publish("scan_wifi", "Red WiFi 'RUT240_6B84' no encontrada.");
     }
   }
 }
+
 
 
 void callback(char* topic, byte* payload, unsigned int length){
@@ -184,11 +218,11 @@ void callback(char* topic, byte* payload, unsigned int length){
       ESP.restart();
     }
   }
-  else if (strcmp(topic, "restart_modem") == 0) {
+  else if (strcmp(topic, "restart_modem1") == 0) {
     int estado = payload[0] - '0';
     if (estado== 1){
       digitalWrite(rele2,LOW);
-      delay(5000);
+      delay(10000);
       digitalWrite(rele2,HIGH);
     }
   }
@@ -201,8 +235,17 @@ void callback(char* topic, byte* payload, unsigned int length){
       digitalWrite(rele3,HIGH);
     }
   }
-}
 
+
+  else if (strcmp(topic, "restart_modem2") == 0) {
+    int estado = payload[0] - '0';
+    if (estado== 1){
+      digitalWrite(rele4,LOW);
+      delay(10000);
+      digitalWrite(rele4,HIGH);
+    }
+  }
+}
 
 void reconnect(){
   client.setSocketTimeout(30);
@@ -228,6 +271,13 @@ void reconnect(){
   }
 }
 
+float readBatteryVoltage() {
+  uint32_t raw = adc1_get_raw(ADC1_CHANNEL_6);
+  uint32_t voltage = esp_adc_cal_raw_to_voltage(raw, adc_chars);
+  float actualVoltage = (voltage / 1000.0) * 4 * CALIBRATION_FACTOR; // Ajusta por el divisor de voltaje y calibración
+  return actualVoltage;
+}
+
 
 void setup() {
   pinMode(GPIO_NUM_2, OUTPUT);
@@ -242,7 +292,7 @@ void setup() {
   digitalWrite(rele3, HIGH);
 
   WiFi.mode(WIFI_STA);
-  //scanNetworks();  // Add this to scan for available networks
+  scanNetworks();  // Add this to scan for available networks
 
 
   wifiInit();
@@ -251,10 +301,23 @@ void setup() {
   client.setServer(server, port);
   client.setCallback(callback);
 
+  // contador de reset
+  intententos_restart=0;
+
+  //Definir pines digitalizadores
+  digitalWrite(rele2, HIGH);
+  digitalWrite(rele3, HIGH);
 
   // Print a message when the setup is running
   Serial.println("Hi from setup");
   
+  //medicion de voltage
+  // Inicializar el ADC con características de calibración
+  adc1_config_width(ADC_WIDTH_BIT_12);
+  adc1_config_channel_atten(ADC1_CHANNEL_6, ADC_ATTEN_DB_12); // GPIO 34 = Canal 6
+  adc_chars = (esp_adc_cal_characteristics_t *)calloc(1, sizeof(esp_adc_cal_characteristics_t));
+  esp_adc_cal_characterize(ADC_UNIT_1, ADC_ATTEN_DB_12, ADC_WIDTH_BIT_12, DEFAULT_VREF, adc_chars);
+
 }
 
 void loop() {
@@ -267,7 +330,15 @@ void loop() {
   
   if (!client.connected()){
     reconnect();
+    intententos_restart++;
+  } else {
+      intententos_restart = 0;  // Reiniciar el contador si la conexión es exitosa
+    }
+
+  if (intententos_restart>=3){
+    ESP.restart();
   }
+
   client.loop();
   
 
@@ -286,7 +357,7 @@ void loop() {
     delay(2000);
 
 
-    //Se define e imprime el wifi al que se esta conectado y se publica
+    //Se define y Publica el wifi al que se esta conectado y se publica
     String currentSSID = WiFi.SSID();  // Obtener el SSID actual de la red WiFi
     Serial.print("Publicando nombre de la red: ");
     Serial.println(currentSSID);
@@ -297,10 +368,33 @@ void loop() {
 
 
     delay(2000);
-    //se imprime y se publica las redes disponibles
+    //Se imprime y se publica las redes disponibles
     scanNetworks_publish();
     
-  
+    // Publicar el voltaje
+    //medicion de voltage
+    float batteryVoltage = readBatteryVoltage();
+    Serial.print("Voltaje de la bateria: ");
+    Serial.println(batteryVoltage);
+
+    char mensaje_volt[50];
+    sprintf(mensaje_volt, "volt: %f", batteryVoltage);  // Crear el mensaje a publicar
+    client.publish("volt", mensaje_volt);
+    
+
+    /*
+    // Reiniciar si el voltage es bajo
+    if (batteryVoltage<=8){
+
+      // Configurar el tiempo de deep sleep
+        esp_sleep_enable_timer_wakeup(deep_sleep * 1000000ULL); //10 segundos
+        
+        // Entrar en modo deep sleep
+        esp_deep_sleep_start();
+      
+    }
+    */
+
   }
   
   
